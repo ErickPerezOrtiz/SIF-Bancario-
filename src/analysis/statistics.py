@@ -55,8 +55,10 @@ class FinancialAnalyzer:
         try:
             from src.api.client import SBApiClientV2
             self._v2_client = SBApiClientV2()
+            print(f"DEBUG: SBApiClientV2 inicializado — key presente: {bool(os.getenv('SB_API_KEY'))}")
             return self._v2_client
         except Exception as e:
+            print(f"DEBUG ERROR: SBApiClientV2 no disponible: {e}")
             log.warning("SBApiClientV2 no disponible: %s", e)
             return None
 
@@ -92,8 +94,12 @@ class FinancialAnalyzer:
 
         # ── 1. /indicadores/financieros — solo agregados BANCOS MÚLTIPLES ────
         try:
-            for r in client.indicadores_financieros():
-                # entidad=TODOS devuelve todas las categorías; retener solo BM
+            print("DEBUG: llamando indicadores/financieros API…")
+            raw_fin = list(client.indicadores_financieros())
+            print(f"DEBUG: indicadores/financieros → {len(raw_fin)} registros recibidos")
+            if raw_fin:
+                print(f"DEBUG: primera fila ejemplo: {raw_fin[0]}")
+            for r in raw_fin:
                 if r.get("tipoEntidad") != "BANCOS MÚLTIPLES":
                     continue
                 periodo = _parse_period(r.get("periodo") or r.get("fecha"))
@@ -105,17 +111,21 @@ class FinancialAnalyzer:
                 valor = _safe_float(r.get("valor"))
                 if valor is None:
                     continue
-                # ROE viene de /financieros pero lo mostramos en el chart de Principales
                 tipo = "principales" if nombre == _ROE else "financieros"
                 rows.append({"periodo": periodo, "tipo_indicador": tipo,
                               "nombre": nombre, "valor": valor})
         except Exception as e:
+            import traceback
+            print(f"DEBUG ERROR indicadores/financieros: {e}")
+            print(traceback.format_exc())
             log.warning("API indicadores/financieros falló: %s", e)
 
         # ── 2. /indicadores/morosidad-estresada — calcular ratio ─────────────
-        # morosidad_estresada = (vencido + cobranza + reestructuradoRea) / carteraTotal * 100
         try:
-            for r in client.indicadores_morosidad_estresada():
+            print("DEBUG: llamando indicadores/morosidad-estresada API…")
+            raw_mor = list(client.indicadores_morosidad_estresada())
+            print(f"DEBUG: morosidad-estresada → {len(raw_mor)} registros recibidos")
+            for r in raw_mor:
                 periodo = _parse_period(r.get("periodo") or r.get("fecha"))
                 if not periodo:
                     continue
@@ -129,18 +139,24 @@ class FinancialAnalyzer:
                 rows.append({"periodo": periodo, "tipo_indicador": "morosidad",
                               "nombre": "Morosidad Estresada", "valor": valor})
         except Exception as e:
+            import traceback
+            print(f"DEBUG ERROR morosidad-estresada: {e}")
+            print(traceback.format_exc())
             log.warning("API indicadores/morosidad-estresada falló: %s", e)
 
         # ── 3. /indicadores/principales — pivotear columnas a filas ──────────
-        # Respuesta: {"periodo":"YYYY-MM","morosidad":1.21,"roa":2.58,"tasaActiva":15.1,...}
-        # "margen" viene ahora de /financieros ("Margen de Intermediación Neto")
         PRINCIPALES_MAP = {
             "morosidad": ("morosidad",   "Morosidad Simple"),
             "roa":       ("principales", "ROA"),
             "solvencia": ("principales", "Índice Solvencia"),
         }
         try:
-            for r in client.indicadores_principales():
+            print("DEBUG: llamando indicadores/principales API…")
+            raw_pri = list(client.indicadores_principales())
+            print(f"DEBUG: indicadores/principales → {len(raw_pri)} registros recibidos")
+            if raw_pri:
+                print(f"DEBUG: primera fila ejemplo: {raw_pri[0]}")
+            for r in raw_pri:
                 periodo = _parse_period(r.get("periodo") or r.get("fecha"))
                 if not periodo:
                     continue
@@ -150,7 +166,6 @@ class FinancialAnalyzer:
                         continue
                     rows.append({"periodo": periodo, "tipo_indicador": tipo,
                                   "nombre": nombre, "valor": valor})
-                # Spread de Tasas de Interés = tasaActiva − tasaPasiva
                 ta = _safe_float(r.get("tasaActiva"))
                 tp = _safe_float(r.get("tasaPasiva"))
                 if ta is not None and tp is not None:
@@ -158,6 +173,9 @@ class FinancialAnalyzer:
                                   "nombre": "Spread de Tasas de Interés",
                                   "valor": ta - tp})
         except Exception as e:
+            import traceback
+            print(f"DEBUG ERROR indicadores/principales: {e}")
+            print(traceback.format_exc())
             log.warning("API indicadores/principales falló: %s", e)
 
         if not rows:
@@ -232,14 +250,21 @@ class FinancialAnalyzer:
 
         rows: list[dict] = []
         try:
-            for r in client.captaciones_localidad():
-                # API v2 real fields: provincia (uppercase) + balance (millones RD$)
+            print("DEBUG: llamando captaciones/localidad API…")
+            raw = list(client.captaciones_localidad())
+            print(f"DEBUG: captaciones/localidad → {len(raw)} registros recibidos")
+            if raw:
+                print(f"DEBUG: primera fila ejemplo: {raw[0]}")
+            for r in raw:
                 localidad = str(r.get("provincia", r.get("region", ""))).strip()
                 monto = _safe_float(r.get("balance", r.get("monto", r.get("saldo"))))
                 if not localidad or monto is None:
                     continue
                 rows.append({"localidad": localidad, "total_captado": monto})
         except Exception as e:
+            import traceback
+            print(f"DEBUG ERROR captaciones/localidad: {e}")
+            print(traceback.format_exc())
             log.warning("API captaciones/localidad falló — usando fallback: %s", e)
 
         if not rows:
@@ -596,8 +621,14 @@ class FinancialAnalyzer:
     # ═══════════════════════════════════════════════════════════════════════════
 
     def resumen_ejecutivo(self) -> dict:
+        print("=== DEBUG INICIO ===")
+        print(f"API KEY presente: {bool(os.getenv('SB_API_KEY'))}")
+        print(f"DATA_DIR existe: {DATA_DIR.exists()} — path: {DATA_DIR}")
+        print(f"MySQL disponible: {self._engine_ok()}")
+
         kpis = {}
         if self._engine_ok():
+            print("DEBUG: usando MySQL para KPIs")
             with self._engine.connect() as conn:
                 kpis["total_captado_DOP"] = float(
                     conn.execute(text(
@@ -617,14 +648,12 @@ class FinancialAnalyzer:
                     conn.execute(text(
                         "SELECT COUNT(DISTINCT DATE_FORMAT(fecha,'%Y-%m')) FROM captaciones"
                     )).scalar() or 0)
-                # Solvencia promedio último período
                 kpis["solvencia_promedio"] = float(
                     conn.execute(text(
                         "SELECT AVG(valor) FROM solvencia "
                         "WHERE componente='Índice de Solvencia' "
                         "  AND fecha=(SELECT MAX(fecha) FROM solvencia)"
                     )).scalar() or 0)
-                # Morosidad promedio último período
                 kpis["morosidad_promedio"] = float(
                     conn.execute(text(
                         "SELECT AVG(valor) FROM indicadores "
@@ -632,16 +661,21 @@ class FinancialAnalyzer:
                         "  AND fecha=(SELECT MAX(fecha) FROM indicadores)"
                     )).scalar() or 0)
         else:
+            print("DEBUG: MySQL no disponible — intentando CSVs")
             cap = self._csv("captaciones")
             car = self._csv("cartera_creditos")
             ind = self._csv("indicadores")
             sol = self._csv("solvencia")
+            print(f"DEBUG CSV captaciones: {len(cap)} filas")
+            print(f"DEBUG CSV cartera_creditos: {len(car)} filas")
+            print(f"DEBUG CSV indicadores: {len(ind)} filas")
+            print(f"DEBUG CSV solvencia: {len(sol)} filas")
 
-            cap_dop = cap[(cap["fuente_endpoint"]=="captaciones_moneda") & (cap["moneda"]=="DOP")]
-            kpis["total_captado_DOP"]    = float(cap_dop["monto"].sum())
-            kpis["total_cartera_DOP"]    = float(car[car["fuente_endpoint"]=="cartera_tipo"]["saldo"].sum())
-            kpis["entidades_unicas"]     = int(cap["entidad"].nunique())
-            kpis["periodos_disponibles"] = int(cap["fecha"].nunique())
+            cap_dop = cap[(cap["fuente_endpoint"]=="captaciones_moneda") & (cap["moneda"]=="DOP")] if not cap.empty else cap
+            kpis["total_captado_DOP"]    = float(cap_dop["monto"].sum()) if not cap_dop.empty else 0.0
+            kpis["total_cartera_DOP"]    = float(car[car["fuente_endpoint"]=="cartera_tipo"]["saldo"].sum()) if not car.empty else 0.0
+            kpis["entidades_unicas"]     = int(cap["entidad"].nunique()) if not cap.empty else 0
+            kpis["periodos_disponibles"] = int(cap["fecha"].nunique()) if not cap.empty else 0
 
             if not sol.empty:
                 ult = sol[sol["componente"]=="Índice de Solvencia"]
@@ -657,6 +691,8 @@ class FinancialAnalyzer:
             else:
                 kpis["morosidad_promedio"] = 0.0
 
+        print(f"DEBUG KPIs resultado: {kpis}")
+        print("=== DEBUG FIN ===")
         return kpis
 
     def estadisticas_descriptivas(self) -> dict:
