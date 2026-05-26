@@ -166,4 +166,12 @@ El cliente (`src/api/client.py`) usa `entidad=TODOS&registros=5000` para minimiz
 
 ---
 
+## 🤖 Desarrollado con apoyo de IA
+
+Este proyecto fue desarrollado con el apoyo de **Claude AI** (Anthropic) como asistente de programación — arquitectura del proyecto, integración con la API de la Superintendencia de Bancos, desarrollo de visualizaciones y ajustes del dashboard.
+
+Las decisiones de análisis financiero, diseño del producto y dirección del proyecto son del autor.
+
+---
+
 **Autor:** [Erick Pérez](https://github.com/ErickPerezOrtiz) · Analítica y Ciencia de Datos · ITLA, Santo Domingo RD
