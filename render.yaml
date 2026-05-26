@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: sif-bancario
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_dashboard.py
+    envVars:
+      - key: SB_BASE_URL
+        value: https://apis.sb.gob.do/estadisticas
+      - key: SB_BASE_URL_V2
+        value: https://apis.sb.gob.do/estadisticas/v2
+      - key: SB_API_KEY
+        sync: false          # se configura manualmente en el dashboard de Render
+      - key: DASH_DEBUG
+        value: "False"
+      - key: LOG_LEVEL
+        value: INFO

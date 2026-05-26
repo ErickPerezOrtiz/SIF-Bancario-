@@ -1,0 +1,45 @@
+# ── Credenciales y configuración local ──────────────────────────────────────
+.env
+*.env.local
+
+# ── Entorno virtual ──────────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── Datos generados (CSV de fallback + caché GeoJSON) ────────────────────────
+data/processed/
+data/raw/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+dashboard.log
+dashboard_err.log
+
+# ── Scripts de sondeo y pruebas temporales ───────────────────────────────────
+probe_api.py
+probe_api_out.txt
+probe_out.txt
+probe_err.txt
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+
+# ── Sistema operativo ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
