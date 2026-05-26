@@ -249,6 +249,8 @@ class FinancialAnalyzer:
             return pd.DataFrame()
 
         rows: list[dict] = []
+        entidades_vistas: set = set()
+        periodos_vistos: set = set()
         try:
             print("DEBUG: llamando captaciones/localidad API…")
             raw = list(client.captaciones_localidad())
@@ -261,11 +263,23 @@ class FinancialAnalyzer:
                 if not localidad or monto is None:
                     continue
                 rows.append({"localidad": localidad, "total_captado": monto})
+                ent = str(r.get("entidad", r.get("nombreEntidad", ""))).strip()
+                if ent:
+                    entidades_vistas.add(ent)
+                per = _parse_period(r.get("periodo") or r.get("fecha"))
+                if per:
+                    periodos_vistos.add(per)
         except Exception as e:
             import traceback
             print(f"DEBUG ERROR captaciones/localidad: {e}")
             print(traceback.format_exc())
             log.warning("API captaciones/localidad falló — usando fallback: %s", e)
+
+        # Cachear conteos para resumen_ejecutivo (se sobreescriben si vienen vacíos)
+        if entidades_vistas:
+            FinancialAnalyzer._API_CACHE["entidades_count"] = len(entidades_vistas)
+        if periodos_vistos:
+            FinancialAnalyzer._API_CACHE["periodos_count"] = len(periodos_vistos)
 
         if not rows:
             return pd.DataFrame()
@@ -277,6 +291,50 @@ class FinancialAnalyzer:
         FinancialAnalyzer._API_CACHE[key] = result
         log.info("API captaciones/localidad: %d filas cacheadas", len(result))
         return result.copy()
+
+    def _fetch_cartera_total_api(self) -> float:
+        """
+        Suma total de cartera de créditos (todas las monedas) desde la API v2.
+        Resultado cacheado en _API_CACHE['cartera_total_api'].
+        """
+        key = "cartera_total_api"
+        if key in FinancialAnalyzer._API_CACHE:
+            return FinancialAnalyzer._API_CACHE[key]
+
+        client = self._api_v2()
+        if client is None:
+            return 0.0
+
+        total = 0.0
+        try:
+            print("DEBUG: llamando carteras/creditos/moneda API…")
+            raw = list(client.cartera_moneda())
+            print(f"DEBUG: cartera/moneda → {len(raw)} registros recibidos")
+            if raw:
+                print(f"DEBUG: primera fila cartera: {raw[0]}")
+            for r in raw:
+                v = _safe_float(r.get("saldo", r.get("balance", r.get("monto"))))
+                if v is not None:
+                    total += v
+            # Acumular también entidades y períodos si no los tenemos aún
+            if "entidades_count" not in FinancialAnalyzer._API_CACHE:
+                ents = {str(r.get("entidad", r.get("nombreEntidad", ""))).strip() for r in raw}
+                ents.discard("")
+                if ents:
+                    FinancialAnalyzer._API_CACHE["entidades_count"] = len(ents)
+            if "periodos_count" not in FinancialAnalyzer._API_CACHE:
+                pers = {_parse_period(r.get("periodo") or r.get("fecha")) for r in raw}
+                pers.discard(None)
+                if pers:
+                    FinancialAnalyzer._API_CACHE["periodos_count"] = len(pers)
+        except Exception as e:
+            import traceback
+            print(f"DEBUG ERROR cartera/moneda: {e}")
+            print(traceback.format_exc())
+            log.warning("API cartera/moneda falló: %s", e)
+
+        FinancialAnalyzer._API_CACHE[key] = total
+        return total
 
     # ── Backend: MySQL o CSV ──────────────────────────────────────────────────
     def _engine_ok(self) -> bool:
@@ -671,25 +729,59 @@ class FinancialAnalyzer:
             print(f"DEBUG CSV indicadores: {len(ind)} filas")
             print(f"DEBUG CSV solvencia: {len(sol)} filas")
 
-            cap_dop = cap[(cap["fuente_endpoint"]=="captaciones_moneda") & (cap["moneda"]=="DOP")] if not cap.empty else cap
-            kpis["total_captado_DOP"]    = float(cap_dop["monto"].sum()) if not cap_dop.empty else 0.0
-            kpis["total_cartera_DOP"]    = float(car[car["fuente_endpoint"]=="cartera_tipo"]["saldo"].sum()) if not car.empty else 0.0
-            kpis["entidades_unicas"]     = int(cap["entidad"].nunique()) if not cap.empty else 0
-            kpis["periodos_disponibles"] = int(cap["fecha"].nunique()) if not cap.empty else 0
+            csv_tiene_datos = not cap.empty or not car.empty
+
+            if csv_tiene_datos:
+                cap_dop = cap[(cap["fuente_endpoint"]=="captaciones_moneda") & (cap["moneda"]=="DOP")] if not cap.empty else cap
+                kpis["total_captado_DOP"]    = float(cap_dop["monto"].sum()) if not cap_dop.empty else 0.0
+                kpis["total_cartera_DOP"]    = float(car[car["fuente_endpoint"]=="cartera_tipo"]["saldo"].sum()) if not car.empty else 0.0
+                kpis["entidades_unicas"]     = int(cap["entidad"].nunique()) if not cap.empty else 0
+                kpis["periodos_disponibles"] = int(cap["fecha"].nunique()) if not cap.empty else 0
+            else:
+                # ── Ruta API: sin MySQL ni CSVs (producción sin ETL) ─────────
+                print("DEBUG: CSVs vacíos — usando API para KPIs")
+                df_cap_loc = self.captaciones_por_localidad()   # usa caché si ya fue llamado
+                kpis["total_captado_DOP"] = float(df_cap_loc["total_captado"].sum()) if not df_cap_loc.empty else 0.0
+
+                kpis["total_cartera_DOP"] = self._fetch_cartera_total_api()
+
+                kpis["entidades_unicas"]     = int(FinancialAnalyzer._API_CACHE.get("entidades_count", 0))
+                kpis["periodos_disponibles"] = int(FinancialAnalyzer._API_CACHE.get("periodos_count", 0))
+
+                # Fallback de períodos desde indicadores si captaciones no los reportó
+                if kpis["periodos_disponibles"] == 0:
+                    df_ind_raw = self._fetch_indicadores_api()
+                    if not df_ind_raw.empty:
+                        kpis["periodos_disponibles"] = int(df_ind_raw["periodo"].nunique())
+
+                print(f"DEBUG API KPIs: captado={kpis['total_captado_DOP']:.0f}, "
+                      f"cartera={kpis['total_cartera_DOP']:.0f}, "
+                      f"entidades={kpis['entidades_unicas']}, "
+                      f"periodos={kpis['periodos_disponibles']}")
 
             if not sol.empty:
                 ult = sol[sol["componente"]=="Índice de Solvencia"]
                 fecha_max = ult["fecha"].max()
                 kpis["solvencia_promedio"] = float(ult[ult["fecha"]==fecha_max]["valor"].mean())
             else:
-                kpis["solvencia_promedio"] = 0.0
+                df_ind2 = self._fetch_indicadores_api()
+                if not df_ind2.empty:
+                    sol_api = df_ind2[df_ind2["nombre"] == "Índice Solvencia"]
+                    kpis["solvencia_promedio"] = float(sol_api["valor_promedio"].iloc[-1]) if not sol_api.empty else 0.0
+                else:
+                    kpis["solvencia_promedio"] = 0.0
 
             if not ind.empty:
                 mora = ind[ind["nombre"]=="Morosidad Simple"]
                 fecha_max = mora["fecha"].max()
                 kpis["morosidad_promedio"] = float(mora[mora["fecha"]==fecha_max]["valor"].mean())
             else:
-                kpis["morosidad_promedio"] = 0.0
+                df_ind2 = self._fetch_indicadores_api()
+                if not df_ind2.empty:
+                    mora_api = df_ind2[df_ind2["nombre"] == "Morosidad Simple"]
+                    kpis["morosidad_promedio"] = float(mora_api["valor_promedio"].iloc[-1]) if not mora_api.empty else 0.0
+                else:
+                    kpis["morosidad_promedio"] = 0.0
 
         print(f"DEBUG KPIs resultado: {kpis}")
         print("=== DEBUG FIN ===")

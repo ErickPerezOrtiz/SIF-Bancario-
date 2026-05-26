@@ -287,3 +287,6 @@ class SBApiClientV2:
 
     def captaciones_localidad(self, **kw) -> list:
         return self._get_all_pages("captaciones/localidad", kw)
+
+    def cartera_moneda(self, **kw) -> list:
+        return self._get_all_pages("carteras/creditos/moneda", kw)
