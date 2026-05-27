@@ -10,11 +10,18 @@ from dash import dcc, html
 
 DATA_DIR = pathlib.Path(__file__).parent.parent.parent.parent / "data" / "processed"
 
+# URL primaria: GeoJSON propio en el repo (siempre disponible en producción)
 GEOJSON_URL = (
+    "https://raw.githubusercontent.com/ErickPerezOrtiz/SIF-Bancario-/main/"
+    "data/geojson/provincias_rd.geojson"
+)
+# Fallback alternativo en caso de que el repo no esté accesible
+GEOJSON_URL_FALLBACK = (
     "https://raw.githubusercontent.com/jeasoft/provinces_geojson/master/"
     "provinces_municipality_summary.geojson"
 )
-GEOJSON_CACHE = DATA_DIR / "provincias_rd.geojson"
+GEOJSON_DISK_CACHE = DATA_DIR / "provincias_rd.geojson"
+_GEOJSON_MEM_CACHE: dict | None = None   # caché en memoria para evitar re-descargas
 
 COLORS = {
     "azul_sb": "#003087",
@@ -63,19 +70,29 @@ API_PROVINCE_FIXES = {
 
 
 def _load_geojson() -> dict | None:
-    if GEOJSON_CACHE.exists():
-        with open(GEOJSON_CACHE, encoding="utf-8") as f:
-            return json.load(f)
-    try:
-        r = requests.get(GEOJSON_URL, timeout=15)
-        if r.status_code == 200:
-            geo = r.json()
-            GEOJSON_CACHE.parent.mkdir(parents=True, exist_ok=True)
-            with open(GEOJSON_CACHE, "w", encoding="utf-8") as f:
-                json.dump(geo, f)
-            return geo
-    except Exception:
-        pass
+    global _GEOJSON_MEM_CACHE
+    if _GEOJSON_MEM_CACHE is not None:
+        return _GEOJSON_MEM_CACHE
+
+    # 1. Disco local (runtime cache, gitignored)
+    if GEOJSON_DISK_CACHE.exists():
+        with open(GEOJSON_DISK_CACHE, encoding="utf-8") as f:
+            _GEOJSON_MEM_CACHE = json.load(f)
+            return _GEOJSON_MEM_CACHE
+
+    # 2. URL propia en GitHub (fuente de verdad en producción)
+    for url in (GEOJSON_URL, GEOJSON_URL_FALLBACK):
+        try:
+            r = requests.get(url, timeout=20)
+            if r.status_code == 200:
+                _GEOJSON_MEM_CACHE = r.json()
+                # Guardar en disco para la vida del proceso
+                GEOJSON_DISK_CACHE.parent.mkdir(parents=True, exist_ok=True)
+                with open(GEOJSON_DISK_CACHE, "w", encoding="utf-8") as f:
+                    json.dump(_GEOJSON_MEM_CACHE, f)
+                return _GEOJSON_MEM_CACHE
+        except Exception:
+            continue
     return None
 
 

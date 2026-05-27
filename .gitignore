@@ -7,9 +7,10 @@ venv/
 .venv/
 env/
 
-# ── Datos generados (CSV de fallback + caché GeoJSON) ────────────────────────
+# ── Datos generados (CSV de fallback) ────────────────────────────────────────
 data/processed/
 data/raw/
+# data/geojson/ está incluido en el repo (GeoJSON estático de provincias RD)
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 logs/

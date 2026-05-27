@@ -80,14 +80,33 @@ def _add_covid_band(fig, x0=COVID_P0, x1=COVID_P1):
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
-def build_layout(kpis: dict) -> html.Div:
-    def fmt_millones(v):
-        if v >= 1_000_000:
-            return f"RD$ {v/1_000_000:.2f} billones"
-        if v >= 1_000:
-            return f"RD$ {v/1_000:.1f} mil MM"
-        return f"RD$ {v:,.0f} MM"
+def _fmt_millones(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if v >= 1_000_000:
+        return f"RD$ {v/1_000_000:.2f} billones"
+    if v >= 1_000:
+        return f"RD$ {v/1_000:.1f} mil MM"
+    return f"RD$ {v:,.0f} MM"
 
+
+def _kpi_row_placeholder() -> dbc.Row:
+    """Fila de KPIs con valores 'Cargando…' mostrada al arrancar."""
+    specs = [
+        ("Total Captado (DOP)",      "Cargando…", "Depósitos del público",              COLORS["azul_sb"]),
+        ("Cartera de Créditos",      "Cargando…", "Saldo total prestado",               COLORS["rojo"]),
+        ("Entidades Supervisadas",   "Cargando…", "Bancos, asociaciones y financieras", COLORS["dorado"]),
+        ("Períodos Disponibles",     "Cargando…", "Meses de histórico",                 COLORS["verde"]),
+    ]
+    return dbc.Row(
+        [dbc.Col(_kpi_card(t, v, s, c), md=3) for t, v, s, c in specs],
+        className="mb-4 g-3",
+    )
+
+
+def build_layout() -> html.Div:
     return html.Div([
         # ── Navbar ──
         dbc.Navbar(
@@ -106,33 +125,9 @@ def build_layout(kpis: dict) -> html.Div:
         ),
 
         dbc.Container([
-            # ── KPI Cards ──
-            dbc.Row([
-                dbc.Col(_kpi_card(
-                    "Total Captado (DOP)",
-                    fmt_millones(kpis.get("total_captado_DOP", 0)),
-                    "Depósitos del público",
-                    COLORS["azul_sb"]
-                ), md=3),
-                dbc.Col(_kpi_card(
-                    "Cartera de Créditos",
-                    fmt_millones(kpis.get("total_cartera_DOP", 0)),
-                    "Saldo total prestado",
-                    COLORS["rojo"]
-                ), md=3),
-                dbc.Col(_kpi_card(
-                    "Entidades Supervisadas",
-                    str(kpis.get("entidades_unicas", "—")),
-                    "Bancos, asociaciones y financieras",
-                    COLORS["dorado"]
-                ), md=3),
-                dbc.Col(_kpi_card(
-                    "Períodos Disponibles",
-                    str(kpis.get("periodos_disponibles", "—")),
-                    "Meses de histórico",
-                    COLORS["verde"]
-                ), md=3),
-            ], className="mb-4 g-3"),
+            # ── KPI Cards (lazy) ──
+            dcc.Interval(id="kpi-trigger", interval=800, n_intervals=0, max_intervals=1),
+            html.Div(id="kpi-row", children=_kpi_row_placeholder()),
 
             # ── Tabs ──
             dbc.Tabs([
@@ -171,6 +166,33 @@ def build_layout(kpis: dict) -> html.Div:
 # ── Callbacks ─────────────────────────────────────────────────────────────────
 
 def register_callbacks(app: dash.Dash):
+
+    @app.callback(
+        Output("kpi-row", "children"),
+        Input("kpi-trigger", "n_intervals"),
+        prevent_initial_call=True,
+    )
+    def load_kpis(_):
+        az = get_analyzer()
+        kpis = {}
+        try:
+            kpis = az.resumen_ejecutivo()
+        except Exception as e:
+            logger.warning("KPIs fallaron: %s", e)
+        specs = [
+            ("Total Captado (DOP)",    _fmt_millones(kpis.get("total_captado_DOP", 0)),
+             "Depósitos del público",              COLORS["azul_sb"]),
+            ("Cartera de Créditos",    _fmt_millones(kpis.get("total_cartera_DOP", 0)),
+             "Saldo total prestado",               COLORS["rojo"]),
+            ("Entidades Supervisadas", str(kpis.get("entidades_unicas", "—")),
+             "Bancos, asociaciones y financieras", COLORS["dorado"]),
+            ("Períodos Disponibles",   str(kpis.get("periodos_disponibles", "—")),
+             "Meses de histórico",                 COLORS["verde"]),
+        ]
+        return dbc.Row(
+            [dbc.Col(_kpi_card(t, v, s, c), md=3) for t, v, s, c in specs],
+            className="mb-4 g-3",
+        )
 
     @app.callback(Output("tab-content", "children"), Input("tabs-main", "active_tab"))
     def render_tab(tab):
@@ -681,21 +703,15 @@ def register_callbacks(app: dash.Dash):
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 def create_app() -> dash.Dash:
-    az = get_analyzer()
-    kpis = {}
-    try:
-        kpis = az.resumen_ejecutivo()
-    except Exception as e:
-        logger.warning("No se pudieron cargar los KPIs: %s", e)
-
     app = dash.Dash(
         __name__,
         external_stylesheets=[dbc.themes.BOOTSTRAP],
         title="SIF-Bancario · RD",
         suppress_callback_exceptions=True,
     )
-    app.layout = build_layout(kpis)
+    app.layout = build_layout()
     register_callbacks(app)
+    az = get_analyzer()
     stress.register_stress_callback(app, az)
     ranking.register_ranking_callback(app, az)
     return app
