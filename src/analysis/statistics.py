@@ -40,11 +40,42 @@ def _parse_period(val) -> str | None:
 class FinancialAnalyzer:
     # Caché compartido entre instancias — se llena la primera vez que se llama a la API
     _API_CACHE: dict[str, pd.DataFrame] = {}
+    # Bandera: True cuando preload_all() terminó (éxito o fallo)
+    _PRELOAD_DONE: bool = False
 
     def __init__(self):
         self._engine = None
         self._csv_cache: dict[str, pd.DataFrame] = {}
         self._v2_client = None   # inicializado lazy en _api_v2()
+
+    @classmethod
+    def preload_all(cls):
+        """
+        Precarga todos los endpoints de la API en _API_CACHE.
+        Diseñado para correr en un daemon thread al arrancar el servidor.
+        Establece _PRELOAD_DONE=True al terminar (éxito o fallo).
+        """
+        import time
+        az = cls()
+        t0 = time.time()
+        print("PRELOAD: iniciando precarga de caché en background…")
+
+        steps = [
+            ("captaciones/localidad", az._fetch_captaciones_localidad_api),
+            ("indicadores (financieros+principales+morosidad)", az._fetch_indicadores_api),
+            ("solvencia/componentes", az._fetch_solvencia_api),
+            ("cartera/moneda (total KPI)", az._fetch_cartera_total_api),
+        ]
+        for nombre, fn in steps:
+            try:
+                print(f"PRELOAD: cargando {nombre}…")
+                fn()
+                print(f"PRELOAD: ✓ {nombre} ({time.time()-t0:.0f}s)")
+            except Exception as e:
+                print(f"PRELOAD: ✗ {nombre} error: {e}")
+
+        cls._PRELOAD_DONE = True
+        print(f"PRELOAD: completado en {time.time()-t0:.0f}s — caché listo")
 
     # ── Cliente API v2 ────────────────────────────────────────────────────────
 
@@ -179,6 +210,7 @@ class FinancialAnalyzer:
             log.warning("API indicadores/principales falló: %s", e)
 
         if not rows:
+            FinancialAnalyzer._API_CACHE["indicadores_api"] = pd.DataFrame()
             return pd.DataFrame()
 
         df = pd.DataFrame(rows)
@@ -224,6 +256,7 @@ class FinancialAnalyzer:
             log.warning("API solvencia falló — usando fallback: %s", e)
 
         if not rows:
+            FinancialAnalyzer._API_CACHE[key] = pd.DataFrame()
             return pd.DataFrame()
 
         df = pd.DataFrame(rows)
@@ -282,6 +315,7 @@ class FinancialAnalyzer:
             FinancialAnalyzer._API_CACHE["periodos_count"] = len(periodos_vistos)
 
         if not rows:
+            FinancialAnalyzer._API_CACHE["captaciones_localidad_api"] = pd.DataFrame()
             return pd.DataFrame()
 
         result = (pd.DataFrame(rows)
@@ -333,7 +367,7 @@ class FinancialAnalyzer:
             print(traceback.format_exc())
             log.warning("API cartera/moneda falló: %s", e)
 
-        FinancialAnalyzer._API_CACHE[key] = total
+        FinancialAnalyzer._API_CACHE[key] = total   # cachear siempre (0.0 si falló)
         return total
 
     # ── Backend: MySQL o CSV ──────────────────────────────────────────────────

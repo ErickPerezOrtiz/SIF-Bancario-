@@ -1,5 +1,6 @@
 """Dashboard interactivo — Sistema de Inteligencia Financiera Banca Dominicana."""
 import logging
+import threading
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -79,6 +80,21 @@ def _add_covid_band(fig, x0=COVID_P0, x1=COVID_P1):
 
 
 # ── Layout ────────────────────────────────────────────────────────────────────
+
+def _loading_card(msg: str = "Datos cargando en segundo plano…") -> dbc.Container:
+    """Spinner mostrado en tabs mientras el preload background aún no terminó."""
+    return dbc.Container(dbc.Row(dbc.Col(dbc.Card(dbc.CardBody([
+        dbc.Spinner(color="primary", size="lg"),
+        html.P(msg, className="mt-3 mb-1 text-muted"),
+        html.P(
+            "El servidor está descargando datos de la API de la Superintendencia de Bancos. "
+            "Esto ocurre solo la primera vez tras cada reinicio (~1-3 min). "
+            "Haz clic en la pestaña de nuevo en unos segundos.",
+            className="text-muted small mb-0",
+        ),
+    ]), className="text-center py-5 shadow-sm border-0"),
+    md=8, className="mx-auto mt-5"), className="mt-4"))
+
 
 def _fmt_millones(v):
     try:
@@ -197,6 +213,13 @@ def register_callbacks(app: dash.Dash):
     @app.callback(Output("tab-content", "children"), Input("tabs-main", "active_tab"))
     def render_tab(tab):
         az = get_analyzer()
+
+        # Tabs que usan CSVs macro o no necesitan API — siempre disponibles
+        _NO_API_TABS = {"tab-inicio", "tab-conceptos", "tab-macro", "tab-remesas", "tab-stress"}
+
+        # Si el preload aún no terminó y este tab necesita la API → spinner
+        if tab not in _NO_API_TABS and not FinancialAnalyzer._PRELOAD_DONE:
+            return _loading_card()
 
         # ── Inicio ────────────────────────────────────────────────────────────
         if tab == "tab-inicio":
@@ -714,6 +737,12 @@ def create_app() -> dash.Dash:
     az = get_analyzer()
     stress.register_stress_callback(app, az)
     ranking.register_ranking_callback(app, az)
+
+    # Precargar caché de la API en background — no bloquea el arranque
+    t = threading.Thread(target=FinancialAnalyzer.preload_all, daemon=True, name="api-preload")
+    t.start()
+    logger.info("Thread de precarga de API iniciado.")
+
     return app
 
 
