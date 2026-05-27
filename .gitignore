@@ -7,10 +7,14 @@ venv/
 .venv/
 env/
 
-# ── Datos generados (CSV de fallback) ────────────────────────────────────────
-data/processed/
+# ── Datos estáticos incluidos en el repo ─────────────────────────────────────
+# data/processed/*.csv  → se incluyen (CSVs pre-generados para producción)
+# data/geojson/         → se incluye (GeoJSON estático de provincias RD)
+
+# Archivos excluidos de git
 data/raw/
-# data/geojson/ está incluido en el repo (GeoJSON estático de provincias RD)
+data/processed/*.json
+data/processed/*.geojson
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 logs/

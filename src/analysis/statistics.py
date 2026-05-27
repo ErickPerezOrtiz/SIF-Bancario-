@@ -107,6 +107,14 @@ class FinancialAnalyzer:
         if key in FinancialAnalyzer._API_CACHE:
             return FinancialAnalyzer._API_CACHE[key].copy()
 
+        # Modo producción: CSV pre-generado por scripts/generar_datos.py
+        _csv_cache = DATA_DIR / "cache_indicadores.csv"
+        if _csv_cache.exists():
+            df = pd.read_csv(_csv_cache)
+            FinancialAnalyzer._API_CACHE[key] = df
+            log.info("Indicadores: cargados desde CSV estático (%d filas)", len(df))
+            return df.copy()
+
         client = self._api_v2()
         if client is None:
             return pd.DataFrame()
@@ -233,6 +241,14 @@ class FinancialAnalyzer:
         if key in FinancialAnalyzer._API_CACHE:
             return FinancialAnalyzer._API_CACHE[key].copy()
 
+        # Modo producción: CSV pre-generado por scripts/generar_datos.py
+        _csv_cache = DATA_DIR / "cache_solvencia.csv"
+        if _csv_cache.exists():
+            df = pd.read_csv(_csv_cache)
+            FinancialAnalyzer._API_CACHE[key] = df
+            log.info("Solvencia: cargada desde CSV estático (%d filas)", len(df))
+            return df.copy()
+
         client = self._api_v2()
         if client is None:
             return pd.DataFrame()
@@ -276,6 +292,14 @@ class FinancialAnalyzer:
         key = "captaciones_localidad_api"
         if key in FinancialAnalyzer._API_CACHE:
             return FinancialAnalyzer._API_CACHE[key].copy()
+
+        # Modo producción: CSV pre-generado por scripts/generar_datos.py
+        _csv_cache = DATA_DIR / "cache_captaciones_localidad.csv"
+        if _csv_cache.exists():
+            df = pd.read_csv(_csv_cache)
+            FinancialAnalyzer._API_CACHE[key] = df
+            log.info("Captaciones localidad: cargadas desde CSV estático (%d filas)", len(df))
+            return df.copy()
 
         client = self._api_v2()
         if client is None:
@@ -334,6 +358,19 @@ class FinancialAnalyzer:
         key = "cartera_total_api"
         if key in FinancialAnalyzer._API_CACHE:
             return FinancialAnalyzer._API_CACHE[key]
+
+        # Modo producción: leer desde cache_meta.csv generado por scripts/generar_datos.py
+        _meta_csv = DATA_DIR / "cache_meta.csv"
+        if _meta_csv.exists():
+            meta = pd.read_csv(_meta_csv)
+            total = float(meta["cartera_total_dop"].iloc[0])
+            FinancialAnalyzer._API_CACHE[key] = total
+            if "entidades_count" not in FinancialAnalyzer._API_CACHE:
+                FinancialAnalyzer._API_CACHE["entidades_count"] = int(meta["entidades_count"].iloc[0])
+            if "periodos_count" not in FinancialAnalyzer._API_CACHE:
+                FinancialAnalyzer._API_CACHE["periodos_count"] = int(meta["periodos_count"].iloc[0])
+            log.info("Cartera total: cargada desde CSV estático (%.0f)", total)
+            return total
 
         client = self._api_v2()
         if client is None:
